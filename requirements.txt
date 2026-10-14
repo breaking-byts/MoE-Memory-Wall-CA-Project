@@ -1,0 +1,4 @@
+# Only analysis_d4.py needs these (plots + statistics).
+# analysis_d2.py and analysis_d3.py use the Python standard library only.
+numpy==2.5.2
+matplotlib==3.11.1
