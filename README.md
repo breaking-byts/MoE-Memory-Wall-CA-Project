@@ -17,7 +17,7 @@ D1–D4). The full write-up is [`report/CA Midterm Report Group 24.pdf`](<report
 ## Layout
 
 ```
-mixtral_gpu.yaml / mixtral_duplex.yaml      D1 configs (baseline vs Duplex, 4xH100)
+mixtral_gpu.yaml / mixtral_duplex.yaml      D1 configs (baseline vs Duplex, 4×H100)
 mixtral_single_gpu.yaml                     D2 single-GPU config (also feeds D3's op tree)
 ssd_cfgs/cpu.yaml / cpu_copy.yaml           D2 execution / loading configs (1 GPU, experts in CPU DRAM)
 LLMSimulator/                               simulator for D1/D2-OOM/D3 (upstream 4192527 + PIM patch)
@@ -31,16 +31,27 @@ report/                                     final midterm report PDF + D4 figure
 
 ## Prerequisites
 
-- A Linux container (the team used Podman/Docker with `ubuntu:22.04`) with
-  `g++-11 gcc-11 cmake make git` (`git` is required: CMake fetches `yaml-cpp`).
-- Python 3 with pip; `pip install -r requirements.txt` (only needed for D4's plots;
-  `analysis_d2.py` and `analysis_d3.py` use the standard library only).
+- A Linux container host. The team used Podman with `ubuntu:22.04`
+  (`podman machine init && podman machine start` first on macOS, then the
+  commands below; Docker works the same with `docker` in place of `podman`).
+  Inside the container: `g++-11 gcc-11 cmake make git`
+  (`git` is required: CMake fetches `yaml-cpp` at configure time).
+- Python 3 with pip and venv (`analysis_d2.py` and `analysis_d3.py` use the
+  standard library only; only `analysis_d4.py` needs `requirements.txt`).
 - No physical GPU needed: everything here is simulation.
+- Timings on a 4-core container host: clone ~5 s, pip install ~10 s,
+  toolchain install ~1 min, LLMSimulator build ~7 min, SSD-offloading
+  build ~4 min, all simulation runs < 10 s, analyses ~10 s (~12 min total).
 
 ## Reproduce (from a fresh clone, without any checked-in build)
 
 ```bash
-# 1. Python deps (only analysis_d4.py needs them)
+# 0. Clone and enter
+git clone https://github.com/breaking-byts/MoE-Memory-Wall-CA-Project.git
+cd MoE-Memory-Wall-CA-Project
+
+# 1. Python env (only analysis_d4.py needs it)
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 2. Build (inside the container; LLMSimulator needs data/ to exist for CSV export)
@@ -62,10 +73,20 @@ podman exec rerun bash -lc "cd /work/SSD-offloading/LLMSimulator/build && \
   cp ../../../ssd_cfgs/cpu_copy.yaml config.yaml && ./run > ../../../ssd_results/ssd_cpu_copy.log && \
   cp tmp/*.csv ../../../ssd_results/"
 
-# 4. Analyse (on the host)
+# D1 isolation: the same D1 configs with one field flipped each
+# (mixtral_gpu.yaml with both tensor degrees 4; mixtral_duplex.yaml with
+# parallel_execution off) — evidence kept in rerun_backup/
+
+# 4. Analyse (on the host, venv activated)
 python3 analysis_d2.py
 python3 analysis_d3.py
 python3 analysis_d4.py
+
+# 5. Verify your outputs match the committed ones
+grep -h "^Total:" run_mixtral_gpu.log run_mixtral_duplex.log
+# expect 23943455.249045 and 7725699.519236 (ns)
+grep "^Total:" run_mixtral_single.log
+# expect 88.4792GB footprint and 75245619.655333 (ns)
 ```
 
 Expected outputs: D1 totals 23.943 ms / 7.726 ms (3.10×); D2 OOM 88.48 GiB,
