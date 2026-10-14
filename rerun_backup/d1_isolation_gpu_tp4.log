@@ -1,0 +1,8 @@
+Using synthesis trace
+ACT: 0.720459GB, Weight: 22.1182GB, Cache: 1.125GB
+Total: 23.9636GB
+-----------------------------------
+-------------start-----------------
+-----------------------------------
+Total: 23640771.520804
+../data//mixtral_synthesis_1024_128_GPU_N1_D4_TP4_DP1_maxbatch32_maxprocess524288_iter3_skew0_precision_byte2_parallel_execution0.csv

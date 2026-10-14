@@ -1,0 +1,39 @@
+# D2 execution run: all expert weights live in CPU memory (off-chip DRAM);
+# collects_gpu_compute: on -> expert_ffn = GPU execution time of the experts.
+model:
+  model_name: mixtral
+
+system:
+  gpu_gen: H100
+  num_node: 1
+  num_device: 1
+  processor_type: GPU
+  offload:
+    collects_gpu_compute: on
+    offload_expert_to_cpu_memory: on
+    offload_expert_to_ssd: off
+    ssd_energy_scale: 1.0
+    offload_bandwidth: 5 # GPU <-> CPU-memory link: NVLink-C2C 5.0 (900 GB/s)
+  distribution:
+    expert_tensor_degree: 1
+    none_expert_tensor_degree: 1
+  optimization:
+    compressed_kv: off
+    use_absorb: off
+    prefill_mode: off
+    decode_mode: on
+
+serving:
+  max_batch_size: 4
+  max_process_token: 0
+
+simulation:
+  data: synthesis
+  input_len: 512
+  output_len: 2
+  precision_byte: 2
+  iter: 2
+  injection_rate: 0
+
+log:
+  output_directory: ./tmp

@@ -1,0 +1,21 @@
+# Python virtualenv (recreate with pip; never commit)
+.venv/
+
+# Build trees and compiled artifacts
+build/
+**/build/
+*.o
+*.a
+*.so
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Editor swap files
+*.swp
+*.swo
