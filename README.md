@@ -3,8 +3,7 @@
 Course project (CA Project 2): study the Mixture-of-Experts memory wall for LLM
 inference using the Mixtral-8x7B model, with the LLMSimulator and SSD-offloading
 simulation frameworks. This repo holds the **mid-semester submission** (deliverables
-D1–D4). The full write-up is [`report/report.pdf`](report/report.pdf) (source:
-[`report/report.tex`](report/report.tex)).
+D1–D4). The full write-up is [`report/CA Midterm Report Group 24.pdf`](<report/CA Midterm Report Group 24.pdf>).
 
 ## Headline results
 
@@ -27,7 +26,7 @@ analysis_d2.py / analysis_d3.py             OOM + load/exec and MoE-flow analyse
 analysis_d4.py -> d4_correlation.png        routing-correlation statistics and plots (needs numpy+matplotlib)
 run_mixtral_*.log / ssd_results/            raw simulator outputs the analyses read
 rerun_backup/                               verification evidence (fresh rebuild + isolation runs)
-report/                                     LaTeX midterm report (report.tex -> report.pdf)
+report/                                     final midterm report PDF + D4 figure
 ```
 
 ## Prerequisites

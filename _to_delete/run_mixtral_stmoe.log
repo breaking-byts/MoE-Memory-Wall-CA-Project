@@ -1,8 +1,0 @@
-Loading sequences Start
-ACT: 0.954834GB, Weight: 86.9932GB, Cache: 0GB
-Total: 87.948GB
------------------------------------
--------------start-----------------
------------------------------------
-Total: 81215758.141795
-../data//mixtral_stmoe_512_32_GPU_N1_D1_TP1_DP1_maxbatch8_maxprocess524288_iter3_skew0_precision_byte2_parallel_execution0.csv
