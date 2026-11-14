@@ -264,7 +264,8 @@ void TopModuleGraph::set_pop_status() {
     float HBM_READ_ENERGY = 4.2 * 0.001;  // HBM3 (nJ/bit)
 
     // data copying energy from CPU-memory/SSD to HBM
-    YAML::Node config = YAML::LoadFile("config.yaml");
+    // [MoE-prefetch project] parse config.yaml once per process (was: once per op)
+    static const YAML::Node config = YAML::LoadFile("config.yaml");
     float OFFLOAD_READ_ENERGY = 0.0;
     if(config["system"]["offload"]["offload_expert_to_cpu_memory"].as<bool>()){
       OFFLOAD_READ_ENERGY = 9.2 * 0.001;  // DDR5 read (nJ/bit)

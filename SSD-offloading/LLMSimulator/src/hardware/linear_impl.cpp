@@ -44,7 +44,8 @@ ExecStatus LinearExecutionGPU(Device_Ptr device, Tensor_Ptr input,
   
   ///////////////////////////////////////////
   ///////////////// latency /////////////////
-  YAML::Node set_config = YAML::LoadFile("config.yaml");
+  // [MoE-prefetch project] parse config.yaml once per process (was: once per linear op)
+  static const YAML::Node set_config = YAML::LoadFile("config.yaml");
   time_ns compute_duration =
       total_flops / compute_peak_flops * 1000 * 1000 * 1000;
   // MoE with offloading

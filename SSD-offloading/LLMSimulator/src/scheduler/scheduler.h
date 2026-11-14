@@ -5,6 +5,7 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <fstream>
 
 
 #include "hardware/hardware_config.h"
@@ -104,6 +105,22 @@ class Scheduler : public std::enable_shared_from_this<Scheduler> {
   std::string expert_file_path;
   
   void initRunningQueue(); // juhwan
+
+  // ---- [MoE-prefetch project] trace-driven routing + routing log ----------
+  // Optional config keys (config.yaml in the working directory):
+  //   simulation: routing_trace: <file>   expert ids per (slot, decode step, layer)
+  //   simulation: routing_log:   <file>   CSV of the experts actually routed
+  // File format of routing_trace (whitespace separated integers):
+  //   header: num_slots num_steps num_layers top_k
+  //   then num_slots*num_steps*num_layers*top_k expert ids,
+  //   ordered slot-major, then step, then layer, then the k choices.
+  bool use_routing_trace = false;
+  int rt_slots = 0, rt_steps = 0, rt_layers = 0, rt_k = 0;
+  std::vector<int> routing_trace;
+  std::ofstream routing_log;
+  long routing_call = 0;  // number of update_expert calls (one per MoE layer)
+  void initRoutingTrace();
+  int tracedExpert(int slot, int step, int layer, int k);
   
  private:
   Scheduler(SystemConfig system_config, ModelConfig& model_config,

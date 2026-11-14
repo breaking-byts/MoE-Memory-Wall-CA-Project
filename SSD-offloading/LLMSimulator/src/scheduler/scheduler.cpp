@@ -1,5 +1,7 @@
 #include "scheduler/scheduler.h"
 
+#include <yaml-cpp/yaml.h>
+
 namespace llm_system {
 Scheduler::Scheduler(SystemConfig system_config, ModelConfig& model_config,
                      std::string expert_file_path, int total_batch_size,
@@ -19,7 +21,52 @@ Scheduler::Scheduler(SystemConfig system_config, ModelConfig& model_config,
   real_data = false;
   disagg_system = system_config.disagg_system;
   initExpertList(expert_file_path);
+  initRoutingTrace();
 };
+
+// [MoE-prefetch project] load an optional routing trace / open a routing log.
+void Scheduler::initRoutingTrace() {
+  YAML::Node cfg = YAML::LoadFile("config.yaml");
+  YAML::Node sim = cfg["simulation"];
+  if (sim["routing_log"] && sim["routing_log"].as<std::string>() != "none") {
+    std::string path = sim["routing_log"].as<std::string>();
+    routing_log.open(path);
+    assertTrue(routing_log.is_open(), "cannot open routing_log " + path);
+    routing_log << "call,step,layer,slot";
+    for (int k = 0; k < model_config.top_k; k++) routing_log << ",e" << k;
+    routing_log << "\n";
+  }
+  if (!sim["routing_trace"] || sim["routing_trace"].as<std::string>() == "none") {
+    return;
+  }
+  std::string path = sim["routing_trace"].as<std::string>();
+  std::ifstream f(path);
+  assertTrue(f.is_open(), "cannot open routing_trace " + path);
+  f >> rt_slots >> rt_steps >> rt_layers >> rt_k;
+  int num_layer = model_config.num_layers / model_config.expert_freq;
+  assertTrue(rt_layers == num_layer, "routing_trace layer count != model MoE layers");
+  assertTrue(rt_k == model_config.top_k, "routing_trace top_k != model top_k");
+  long n = (long)rt_slots * rt_steps * rt_layers * rt_k;
+  routing_trace.resize(n);
+  for (long i = 0; i < n; i++) {
+    assertTrue((bool)(f >> routing_trace[i]), "routing_trace is truncated");
+    assertTrue(routing_trace[i] >= 0 && routing_trace[i] < model_config.num_routed_expert,
+               "routing_trace expert id out of range");
+    for (long j = i - i % rt_k; j < i; j++) {   // top-k choices of one token must be distinct
+      assertTrue(routing_trace[j] != routing_trace[i], "routing_trace repeats an expert within a token");
+    }
+  }
+  use_routing_trace = true;
+  std::cout << "[routing_trace] " << path << ": " << rt_slots << " slots x " << rt_steps
+            << " steps x " << rt_layers << " layers, top-" << rt_k << std::endl;
+}
+
+int Scheduler::tracedExpert(int slot, int step, int layer, int k) {
+  assertTrue(slot < rt_slots, "routing_trace has fewer slots than the batch size");
+  assertTrue(step < rt_steps, "routing_trace has fewer decode steps than simulated");
+  long idx = (((long)slot * rt_steps + step) * rt_layers + layer) * rt_k + k;
+  return routing_trace[idx];
+}
 
 bool Scheduler::hasSumSeq() {
   for (auto batchseq : running_queue) {

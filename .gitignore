@@ -19,3 +19,20 @@ __pycache__/
 # Editor swap files
 *.swp
 *.swo
+
+# ---- final evaluation ----
+# TinyMoE training inputs/outputs (re-created by workloads/tinymoe/*.sh/.py)
+workloads/tinymoe/corpus/
+workloads/tinymoe/checkpoint/
+workloads/tinymoe/train.log
+# raw simulator runs (one representative run is whitelisted below)
+experiments/sim_out/*
+!experiments/sim_out/H100-NVL5_tinymoe-prose_B1_g0/
+.pytest_cache/
+# regenerated deterministically by workloads/synthetic.py (run_final.sh step 3)
+workloads/traces/uniform.npz
+workloads/traces/mixtral_calibrated.npz
+# raw per-run timeline results; a gzip copy (f2_runs.jsonl.gz) is committed
+experiments/results/f2_runs.jsonl
+experiments/sim_out/H100-NVL5_tinymoe-prose_B1_g0/work_*/log/
+experiments/sim_out/H100-NVL5_tinymoe-prose_B1_g0/work_*/dram_config*.yaml
