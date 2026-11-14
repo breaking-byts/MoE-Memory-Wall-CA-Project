@@ -1,0 +1,216 @@
+diff --git a/SSD-offloading/LLMSimulator/src/hardware/device.cpp b/SSD-offloading/LLMSimulator/src/hardware/device.cpp
+index d267e51..7d0c7d1 100644
+--- a/SSD-offloading/LLMSimulator/src/hardware/device.cpp
++++ b/SSD-offloading/LLMSimulator/src/hardware/device.cpp
+@@ -31,7 +31,10 @@ Device::Device(SystemConfig config, int device_total_rank, Cluster_ptr cluster)
+   top_module_graph = TopModuleGraph::Create(status);
+ 
+   std::string dram_cfg_path;
+-  if(config.gpu_gen == "H100"){
++  // [MoE-prefetch project] A100 80 GB had no DRAM organisation here; reuse the 80 GB HBM
++  // stack description.  It is only used by Ramulator (use_ramulator is off in all runs):
++  // the analytical model takes A100 bandwidth/FLOPs/capacity from SystemConfig A100.
++  if(config.gpu_gen == "H100" || config.gpu_gen == "A100"){
+     dram_cfg_path = "./dram_config_HBM3_80GB.yaml";
+   }
+   else if(config.gpu_gen == "B100" || config.gpu_gen == "B200"){
+@@ -41,8 +44,8 @@ Device::Device(SystemConfig config, int device_total_rank, Cluster_ptr cluster)
+ 
+   double memory_scale_factor = 0;
+   MemoryConfig memory_config = MemoryConfig(config.num_cube, config.num_logic_cube);
+-  if(config.gpu_gen == "H100"){
+-    // H100, HBM3 80GB, 5.2Gbps
++  if(config.gpu_gen == "H100" || config.gpu_gen == "A100"){
++    // H100, HBM3 80GB, 5.2Gbps (A100 80 GB: same organisation, see above)
+     memory_scale_factor = 0.76923;
+     memory_config = hbm3_80GB;
+     memory_config.num_cube = config.num_cube;
+diff --git a/SSD-offloading/LLMSimulator/src/hardware/linear_impl.cpp b/SSD-offloading/LLMSimulator/src/hardware/linear_impl.cpp
+index 9be0704..34b5ea9 100644
+--- a/SSD-offloading/LLMSimulator/src/hardware/linear_impl.cpp
++++ b/SSD-offloading/LLMSimulator/src/hardware/linear_impl.cpp
+@@ -44,7 +44,8 @@ ExecStatus LinearExecutionGPU(Device_Ptr device, Tensor_Ptr input,
+   
+   ///////////////////////////////////////////
+   ///////////////// latency /////////////////
+-  YAML::Node set_config = YAML::LoadFile("config.yaml");
++  // [MoE-prefetch project] parse config.yaml once per process (was: once per linear op)
++  static const YAML::Node set_config = YAML::LoadFile("config.yaml");
+   time_ns compute_duration =
+       total_flops / compute_peak_flops * 1000 * 1000 * 1000;
+   // MoE with offloading
+diff --git a/SSD-offloading/LLMSimulator/src/module/module_graph.cpp b/SSD-offloading/LLMSimulator/src/module/module_graph.cpp
+index 11cd4d6..8d3d1e0 100644
+--- a/SSD-offloading/LLMSimulator/src/module/module_graph.cpp
++++ b/SSD-offloading/LLMSimulator/src/module/module_graph.cpp
+@@ -264,7 +264,8 @@ void TopModuleGraph::set_pop_status() {
+     float HBM_READ_ENERGY = 4.2 * 0.001;  // HBM3 (nJ/bit)
+ 
+     // data copying energy from CPU-memory/SSD to HBM
+-    YAML::Node config = YAML::LoadFile("config.yaml");
++    // [MoE-prefetch project] parse config.yaml once per process (was: once per op)
++    static const YAML::Node config = YAML::LoadFile("config.yaml");
+     float OFFLOAD_READ_ENERGY = 0.0;
+     if(config["system"]["offload"]["offload_expert_to_cpu_memory"].as<bool>()){
+       OFFLOAD_READ_ENERGY = 9.2 * 0.001;  // DDR5 read (nJ/bit)
+diff --git a/SSD-offloading/LLMSimulator/src/scheduler/scheduler.cpp b/SSD-offloading/LLMSimulator/src/scheduler/scheduler.cpp
+index 577732b..90215eb 100644
+--- a/SSD-offloading/LLMSimulator/src/scheduler/scheduler.cpp
++++ b/SSD-offloading/LLMSimulator/src/scheduler/scheduler.cpp
+@@ -1,5 +1,7 @@
+ #include "scheduler/scheduler.h"
+ 
++#include <yaml-cpp/yaml.h>
++
+ namespace llm_system {
+ Scheduler::Scheduler(SystemConfig system_config, ModelConfig& model_config,
+                      std::string expert_file_path, int total_batch_size,
+@@ -19,8 +21,53 @@ Scheduler::Scheduler(SystemConfig system_config, ModelConfig& model_config,
+   real_data = false;
+   disagg_system = system_config.disagg_system;
+   initExpertList(expert_file_path);
++  initRoutingTrace();
+ };
+ 
++// [MoE-prefetch project] load an optional routing trace / open a routing log.
++void Scheduler::initRoutingTrace() {
++  YAML::Node cfg = YAML::LoadFile("config.yaml");
++  YAML::Node sim = cfg["simulation"];
++  if (sim["routing_log"] && sim["routing_log"].as<std::string>() != "none") {
++    std::string path = sim["routing_log"].as<std::string>();
++    routing_log.open(path);
++    assertTrue(routing_log.is_open(), "cannot open routing_log " + path);
++    routing_log << "call,step,layer,slot";
++    for (int k = 0; k < model_config.top_k; k++) routing_log << ",e" << k;
++    routing_log << "\n";
++  }
++  if (!sim["routing_trace"] || sim["routing_trace"].as<std::string>() == "none") {
++    return;
++  }
++  std::string path = sim["routing_trace"].as<std::string>();
++  std::ifstream f(path);
++  assertTrue(f.is_open(), "cannot open routing_trace " + path);
++  f >> rt_slots >> rt_steps >> rt_layers >> rt_k;
++  int num_layer = model_config.num_layers / model_config.expert_freq;
++  assertTrue(rt_layers == num_layer, "routing_trace layer count != model MoE layers");
++  assertTrue(rt_k == model_config.top_k, "routing_trace top_k != model top_k");
++  long n = (long)rt_slots * rt_steps * rt_layers * rt_k;
++  routing_trace.resize(n);
++  for (long i = 0; i < n; i++) {
++    assertTrue((bool)(f >> routing_trace[i]), "routing_trace is truncated");
++    assertTrue(routing_trace[i] >= 0 && routing_trace[i] < model_config.num_routed_expert,
++               "routing_trace expert id out of range");
++    for (long j = i - i % rt_k; j < i; j++) {   // top-k choices of one token must be distinct
++      assertTrue(routing_trace[j] != routing_trace[i], "routing_trace repeats an expert within a token");
++    }
++  }
++  use_routing_trace = true;
++  std::cout << "[routing_trace] " << path << ": " << rt_slots << " slots x " << rt_steps
++            << " steps x " << rt_layers << " layers, top-" << rt_k << std::endl;
++}
++
++int Scheduler::tracedExpert(int slot, int step, int layer, int k) {
++  assertTrue(slot < rt_slots, "routing_trace has fewer slots than the batch size");
++  assertTrue(step < rt_steps, "routing_trace has fewer decode steps than simulated");
++  long idx = (((long)slot * rt_steps + step) * rt_layers + layer) * rt_k + k;
++  return routing_trace[idx];
++}
++
+ bool Scheduler::hasSumSeq() {
+   for (auto batchseq : running_queue) {
+     if (batchseq->get_sum().size() != 0) {
+diff --git a/SSD-offloading/LLMSimulator/src/scheduler/scheduler.h b/SSD-offloading/LLMSimulator/src/scheduler/scheduler.h
+index d5e1bbd..ab9556b 100644
+--- a/SSD-offloading/LLMSimulator/src/scheduler/scheduler.h
++++ b/SSD-offloading/LLMSimulator/src/scheduler/scheduler.h
+@@ -5,6 +5,7 @@
+ #include <vector>
+ #include <algorithm>
+ #include <numeric>
++#include <fstream>
+ 
+ 
+ #include "hardware/hardware_config.h"
+@@ -104,6 +105,22 @@ class Scheduler : public std::enable_shared_from_this<Scheduler> {
+   std::string expert_file_path;
+   
+   void initRunningQueue(); // juhwan
++
++  // ---- [MoE-prefetch project] trace-driven routing + routing log ----------
++  // Optional config keys (config.yaml in the working directory):
++  //   simulation: routing_trace: <file>   expert ids per (slot, decode step, layer)
++  //   simulation: routing_log:   <file>   CSV of the experts actually routed
++  // File format of routing_trace (whitespace separated integers):
++  //   header: num_slots num_steps num_layers top_k
++  //   then num_slots*num_steps*num_layers*top_k expert ids,
++  //   ordered slot-major, then step, then layer, then the k choices.
++  bool use_routing_trace = false;
++  int rt_slots = 0, rt_steps = 0, rt_layers = 0, rt_k = 0;
++  std::vector<int> routing_trace;
++  std::ofstream routing_log;
++  long routing_call = 0;  // number of update_expert calls (one per MoE layer)
++  void initRoutingTrace();
++  int tracedExpert(int slot, int step, int layer, int k);
+   
+  private:
+   Scheduler(SystemConfig system_config, ModelConfig& model_config,
+diff --git a/SSD-offloading/LLMSimulator/src/scheduler/sequence.cpp b/SSD-offloading/LLMSimulator/src/scheduler/sequence.cpp
+index 4352e7a..3ee6f6d 100644
+--- a/SSD-offloading/LLMSimulator/src/scheduler/sequence.cpp
++++ b/SSD-offloading/LLMSimulator/src/scheduler/sequence.cpp
+@@ -166,7 +166,9 @@ void BatchedSequence::update_expert(int num_expert, int top_k,
+   }
+   clear_expert();
+ 
++  int slot = -1;  // [MoE-prefetch project] position of the sequence in the batch
+   for (auto seq : sequence) {
++    slot++;
+     if (seq->num_process_token == 0) {
+       continue;
+     }
+@@ -175,6 +177,36 @@ void BatchedSequence::update_expert(int num_expert, int top_k,
+ 
+     for (int token_id = current_len;
+          token_id < current_len + seq->num_process_token; token_id++) {
++      if (scheduler->use_routing_trace || scheduler->routing_log.is_open()) {
++        // [MoE-prefetch project] trace-driven routing and/or routing log.
++        // Decode step = tokens generated so far by this sequence (negative in prefill).
++        int step = token_id - seq->input_len;
++        std::vector<int> chosen;
++        if (scheduler->use_routing_trace) {
++          assertTrue(step >= 0, "routing_trace is defined for decode tokens only (decode_mode: on)");
++          for (int k = 0; k < top_k; k++) {
++            chosen.push_back(scheduler->tracedExpert(slot, step, cur_layer, k));
++          }
++        } else if (seq->get_expert_from_list) {     // unchanged original selection, only logged
++          for (int k = 0; k < top_k; k++) {
++            chosen.push_back(scheduler->sequences_info[seq_id]
++                                 ->expert_list[token_id * num_layer + cur_layer][k]);
++          }
++        } else {
++          std::set<int> expert_list = scheduler->getRandomExpert(top_k);
++          chosen.assign(expert_list.begin(), expert_list.end());
++        }
++        for (int e_id : chosen) {
++          num_token_in_expert[e_id] += 1;
++        }
++        if (scheduler->routing_log.is_open() && step >= 0) {   // decode tokens only
++          scheduler->routing_log << scheduler->routing_call << "," << step << ","
++                                 << cur_layer << "," << slot;
++          for (int e_id : chosen) scheduler->routing_log << "," << e_id;
++          scheduler->routing_log << "\n";
++        }
++        continue;
++      }
+       if (seq->get_expert_from_list) {
+         for (int k = 0; k < top_k; k++) {
+           int e_id = 0;
+@@ -192,6 +224,8 @@ void BatchedSequence::update_expert(int num_expert, int top_k,
+     }
+   }
+ 
++  if (scheduler->routing_log.is_open()) scheduler->routing_log.flush();
++  scheduler->routing_call++;
+   cur_layer++;
+   cur_layer %= num_layer;
+ }

@@ -1,0 +1,7 @@
+[Decode Mode] Current Length of sequences is modified into input_len
+Using synthesis trace
+[routing_trace] ../routing_trace.txt: 1 slots x 192 steps x 32 layers, top-2
+-----------------------------------
+-------------start-----------------
+-----------------------------------
+../csv_copy/mixtral_synthesis_N1_D1_TP1_DP1_batchsize1_CPU_memory_NVLink5_offloaded_weight_copy.csv

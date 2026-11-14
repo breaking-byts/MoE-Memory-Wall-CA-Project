@@ -166,7 +166,9 @@ void BatchedSequence::update_expert(int num_expert, int top_k,
   }
   clear_expert();
 
+  int slot = -1;  // [MoE-prefetch project] position of the sequence in the batch
   for (auto seq : sequence) {
+    slot++;
     if (seq->num_process_token == 0) {
       continue;
     }
@@ -175,6 +177,36 @@ void BatchedSequence::update_expert(int num_expert, int top_k,
 
     for (int token_id = current_len;
          token_id < current_len + seq->num_process_token; token_id++) {
+      if (scheduler->use_routing_trace || scheduler->routing_log.is_open()) {
+        // [MoE-prefetch project] trace-driven routing and/or routing log.
+        // Decode step = tokens generated so far by this sequence (negative in prefill).
+        int step = token_id - seq->input_len;
+        std::vector<int> chosen;
+        if (scheduler->use_routing_trace) {
+          assertTrue(step >= 0, "routing_trace is defined for decode tokens only (decode_mode: on)");
+          for (int k = 0; k < top_k; k++) {
+            chosen.push_back(scheduler->tracedExpert(slot, step, cur_layer, k));
+          }
+        } else if (seq->get_expert_from_list) {     // unchanged original selection, only logged
+          for (int k = 0; k < top_k; k++) {
+            chosen.push_back(scheduler->sequences_info[seq_id]
+                                 ->expert_list[token_id * num_layer + cur_layer][k]);
+          }
+        } else {
+          std::set<int> expert_list = scheduler->getRandomExpert(top_k);
+          chosen.assign(expert_list.begin(), expert_list.end());
+        }
+        for (int e_id : chosen) {
+          num_token_in_expert[e_id] += 1;
+        }
+        if (scheduler->routing_log.is_open() && step >= 0) {   // decode tokens only
+          scheduler->routing_log << scheduler->routing_call << "," << step << ","
+                                 << cur_layer << "," << slot;
+          for (int e_id : chosen) scheduler->routing_log << "," << e_id;
+          scheduler->routing_log << "\n";
+        }
+        continue;
+      }
       if (seq->get_expert_from_list) {
         for (int k = 0; k < top_k; k++) {
           int e_id = 0;
@@ -192,6 +224,8 @@ void BatchedSequence::update_expert(int num_expert, int top_k,
     }
   }
 
+  if (scheduler->routing_log.is_open()) scheduler->routing_log.flush();
+  scheduler->routing_call++;
   cur_layer++;
   cur_layer %= num_layer;
 }

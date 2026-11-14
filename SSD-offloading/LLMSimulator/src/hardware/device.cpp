@@ -31,7 +31,10 @@ Device::Device(SystemConfig config, int device_total_rank, Cluster_ptr cluster)
   top_module_graph = TopModuleGraph::Create(status);
 
   std::string dram_cfg_path;
-  if(config.gpu_gen == "H100"){
+  // [MoE-prefetch project] A100 80 GB had no DRAM organisation here; reuse the 80 GB HBM
+  // stack description.  It is only used by Ramulator (use_ramulator is off in all runs):
+  // the analytical model takes A100 bandwidth/FLOPs/capacity from SystemConfig A100.
+  if(config.gpu_gen == "H100" || config.gpu_gen == "A100"){
     dram_cfg_path = "./dram_config_HBM3_80GB.yaml";
   }
   else if(config.gpu_gen == "B100" || config.gpu_gen == "B200"){
@@ -41,8 +44,8 @@ Device::Device(SystemConfig config, int device_total_rank, Cluster_ptr cluster)
 
   double memory_scale_factor = 0;
   MemoryConfig memory_config = MemoryConfig(config.num_cube, config.num_logic_cube);
-  if(config.gpu_gen == "H100"){
-    // H100, HBM3 80GB, 5.2Gbps
+  if(config.gpu_gen == "H100" || config.gpu_gen == "A100"){
+    // H100, HBM3 80GB, 5.2Gbps (A100 80 GB: same organisation, see above)
     memory_scale_factor = 0.76923;
     memory_config = hbm3_80GB;
     memory_config.num_cube = config.num_cube;
